@@ -8,7 +8,16 @@ logger = logging.getLogger("falcon-scheduler")
 class FalconScheduler:
     def __init__(self, jobs=None, interval_seconds: int = 600, multiprocess: bool = False):
         self.stop_flag = asyncio.Event()
-        self.jobs_to_run = jobs or ["RF-015", "RF-016"]
+        self.jobs_to_run = jobs or [
+            "RF-015",
+            "RF-016",
+            "RF-017",
+            "RF-019",
+            "RF-021",
+            "RF-022",
+            "RF-024",
+            "RF-025",
+        ]
         self.interval = interval_seconds
         self.multiprocess = multiprocess
 

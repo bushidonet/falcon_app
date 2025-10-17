@@ -2,7 +2,7 @@
 
 Estructura completa con:
 - Scheduler asíncrono
-- Jobs registrables (RF-015 Hosts, RF-016 Detections)
+- Jobs registrables (RF-015 a RF-025)
 - Adapter FalconPy con Auth Manager y TokenCache multiproceso
 - TenantRepository de ejemplo
 
