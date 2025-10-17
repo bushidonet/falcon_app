@@ -2,7 +2,8 @@ import logging
 import time
 from typing import Iterable
 
-from falconpy import APIHarness, Hosts, Detects, APIError  # requiere `pip install falconpy`
+import requests
+from falconpy import Hosts, Detects, APIError  # requiere `pip install falconpy`
 from falcon_app.infrastructure.falcon_auth_manager import FalconAuthManager
 
 logger = logging.getLogger(__name__)
@@ -25,60 +26,33 @@ class FalconPyAdapter:
         token = self.auth_manager.get_token()
         return Detects(bearer_token=token)
 
-    def _client_harness(self):
-        token = self.auth_manager.get_token()
-        return APIHarness(base_url=self.BASE_URL, bearer_token=token)
-
     # HTTP helpers
-    def _sdk_request(self, method: str, path: str, params: dict | None = None):
+    def _request(self, method: str, path: str, params: dict | None = None):
         retries = 3
         delay = 2
         for attempt in range(retries):
-            client = self._client_harness()
+            token = self.auth_manager.get_token()
+            headers = {"Authorization": f"Bearer {token}"}
+            url = f"{self.BASE_URL}{path}"
             try:
-                result = client.service_request(method=method, endpoint=path, params=params)
-            except APIError as error:
-                code = getattr(error, "code", None)
-                message = str(error)
-                if code == 401 or "Unauthorized" in message:
+                response = requests.request(method, url, headers=headers, params=params, timeout=30)
+                if response.status_code == 401:
                     logger.warning(f"[{self.tenant_id}] 🔐 Token expirado. Renovando...")
                     self.auth_manager.refresh_after_401()
                     continue
-                if code == 429:
+                if response.status_code == 429:
                     wait = delay * (attempt + 1)
                     logger.warning(f"[{self.tenant_id}] ⏳ Rate limit. Esperando {wait}s...")
                     time.sleep(wait)
                     continue
-                logger.error(f"[{self.tenant_id}] ❌ APIError SDK {method} {path}: {error}")
-                raise
-            except Exception as ex:
-                if "401" in str(ex) or "Unauthorized" in str(ex):
-                    logger.warning(f"[{self.tenant_id}] 🔐 Token expirado. Renovando...")
-                    self.auth_manager.refresh_after_401()
-                    continue
-                logger.error(f"[{self.tenant_id}] ❌ Error inesperado SDK {method} {path}: {ex}")
+                response.raise_for_status()
+                return response.json()
+            except requests.RequestException as ex:
+                logger.error(f"[{self.tenant_id}] ❌ Error HTTP {method} {path}: {ex}")
                 if attempt < retries - 1:
                     time.sleep(delay)
                     continue
                 raise
-
-            status_code = result.get("status_code") if isinstance(result, dict) else None
-            if status_code == 401:
-                logger.warning(f"[{self.tenant_id}] 🔐 Token expirado. Renovando...")
-                self.auth_manager.refresh_after_401()
-                continue
-            if status_code == 429:
-                wait = delay * (attempt + 1)
-                logger.warning(f"[{self.tenant_id}] ⏳ Rate limit. Esperando {wait}s...")
-                time.sleep(wait)
-                continue
-            if status_code and status_code >= 400:
-                logger.error(
-                    f"[{self.tenant_id}] ❌ Error {status_code} al invocar {path}: {result.get('body')}"
-                )
-                raise RuntimeError(result.get("body"))
-
-            return result.get("body", result)
 
     # Jobs
     def list_hosts(self, limit: int = 50):
@@ -156,14 +130,14 @@ class FalconPyAdapter:
             logger.info(f"[{self.tenant_id}] ℹ️ Sin device_ids para RF-015.")
             return []
         params = {"ids": ",".join(ids)}
-        data = self._sdk_request("GET", "/devices/entities/devices/v1", params=params)
+        data = self._request("GET", "/devices/entities/devices/v1", params=params)
         resources = data.get("resources", []) if isinstance(data, dict) else []
         logger.info(f"[{self.tenant_id}] 💻 {len(resources)} endpoints consultados (RF-015).")
         return resources
 
     def search_devices_by_ip(self, filter_query: str):
         params = {"filter": filter_query}
-        data = self._sdk_request("GET", "/devices/queries/devices/v1", params=params)
+        data = self._request("GET", "/devices/queries/devices/v1", params=params)
         resources = data.get("resources", []) if isinstance(data, dict) else []
         logger.info(f"[{self.tenant_id}] 🌐 {len(resources)} endpoints filtrados por red (RF-016).")
         return resources
@@ -171,7 +145,7 @@ class FalconPyAdapter:
     def search_processes_by_hash(self, sha256_hash: str):
         filter_query = f"sha256:'{sha256_hash}'"
         params = {"filter": filter_query}
-        data = self._sdk_request("GET", "/queries/processes/v1", params=params)
+        data = self._request("GET", "/queries/processes/v1", params=params)
         resources = data.get("resources", []) if isinstance(data, dict) else []
         logger.info(f"[{self.tenant_id}] 🧬 {len(resources)} procesos encontrados por hash (RF-017).")
         return resources
@@ -179,7 +153,7 @@ class FalconPyAdapter:
     def search_files_by_path(self, path_pattern: str):
         filter_query = f"path:{path_pattern}"
         params = {"filter": filter_query}
-        data = self._sdk_request("GET", "/queries/files/v1", params=params)
+        data = self._request("GET", "/queries/files/v1", params=params)
         resources = data.get("resources", []) if isinstance(data, dict) else []
         logger.info(f"[{self.tenant_id}] 📁 {len(resources)} archivos encontrados por ruta (RF-019).")
         return resources
@@ -187,7 +161,7 @@ class FalconPyAdapter:
     def search_network_contacts(self, remote_ip_filter: str):
         filter_query = f"remote_ip:'{remote_ip_filter}'"
         params = {"filter": filter_query}
-        data = self._sdk_request("GET", "/queries/network-events/v1", params=params)
+        data = self._request("GET", "/queries/network-events/v1", params=params)
         resources = data.get("resources", []) if isinstance(data, dict) else []
         logger.info(f"[{self.tenant_id}] 🔌 {len(resources)} contactos de red encontrados (RF-021).")
         return resources
@@ -195,7 +169,7 @@ class FalconPyAdapter:
     def search_domain_contacts(self, domain_name: str):
         filter_query = f"domain_name:'{domain_name}'"
         params = {"filter": filter_query}
-        data = self._sdk_request("GET", "/queries/dns-events/v1", params=params)
+        data = self._request("GET", "/queries/dns-events/v1", params=params)
         resources = data.get("resources", []) if isinstance(data, dict) else []
         logger.info(f"[{self.tenant_id}] 🌍 {len(resources)} eventos DNS encontrados (RF-022).")
         return resources
@@ -203,14 +177,14 @@ class FalconPyAdapter:
     def search_processes_by_cmdline(self, cmdline_pattern: str):
         filter_query = f"cmdline:'{cmdline_pattern}'"
         params = {"filter": filter_query}
-        data = self._sdk_request("GET", "/queries/processes/v1", params=params)
+        data = self._request("GET", "/queries/processes/v1", params=params)
         resources = data.get("resources", []) if isinstance(data, dict) else []
         logger.info(f"[{self.tenant_id}] 💻 {len(resources)} procesos por cmdline (RF-024).")
         return resources
 
     def get_process_tree(self, process_id: str):
-        process_detail = self._sdk_request("GET", "/entities/processes/v1", params={"ids": process_id})
-        children = self._sdk_request("GET", "/entities/processes/children/v1", params={"ids": process_id})
+        process_detail = self._request("GET", "/entities/processes/v1", params={"ids": process_id})
+        children = self._request("GET", "/entities/processes/children/v1", params={"ids": process_id})
         detail_resources = process_detail.get("resources", []) if isinstance(process_detail, dict) else []
         child_resources = children.get("resources", []) if isinstance(children, dict) else []
         logger.info(
