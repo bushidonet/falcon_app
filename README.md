@@ -243,3 +243,28 @@ class FalconPyAdapter:
 ```
 
 
+
+##  CIDR a rango de ip
+```
+def cidr_to_fql_filter(cidr: str, field: str = "local_ip") -> str:
+    """
+    Construye un filtro FQL compatible para Falcon (usando wildcards o lista de IPs).
+    """
+    net = ipaddress.ip_network(cidr, strict=False)
+    if net.num_addresses <= 16:
+        ips = [str(ip) for ip in net.hosts()]
+        parts = [f"{field}:'{ip}'" for ip in ips]
+        return " OR ".join(parts)
+    elif net.prefixlen in (8, 16, 24):
+        a, b, c, _ = str(net.network_address).split(".")
+        if net.prefixlen == 8: pattern = f"{a}.*"
+        elif net.prefixlen == 16: pattern = f"{a}.{b}.*"
+        else: pattern = f"{a}.{b}.{c}.*"
+        return f"{field}:'{pattern}'"
+    else:
+        blocks = cidr_to_wildcards(cidr)
+        parts = [f"{field}:'{w}'" for w in blocks]
+        return " OR ".join(parts)
+```
+
+
